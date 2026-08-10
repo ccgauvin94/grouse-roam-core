@@ -1,0 +1,8 @@
+target/
+.gradle/
+build/
+*.aar
+bindings/
+android/roamcore/src/main/java/
+android/roamcore/src/main/jniLibs/
+android/local.properties

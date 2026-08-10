@@ -1,0 +1,28 @@
+[package]
+name = "grouse-roam-core"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Native iroh roam transport for the Grouse Android/KDE clients"
+repository = "https://github.com/ccgauvin94/grouse-roam-core"
+
+# cdylib for uniffi's library-mode bindgen + the Android .aar; rlib/staticlib so
+# the same core can be embedded from a KDE app (C ABI) later.
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[dependencies]
+# The roam protocol, pinned to the user's fork (iroh 1.0.2 inside). This is the
+# SAME code `goose roam share` / `goose serve --roam` run, so the handshake and
+# trust semantics can never drift from what hosts expect. `package` names the
+# workspace member: the goose repo root is a workspace, not a package.
+goose-roaming = { git = "https://github.com/ccgauvin94/goose.git", rev = "58d3a7a4aa47a13f10de20b7c62176477f502191", package = "goose-roaming" }
+iroh = { version = "1.0.2", features = ["tls-aws-lc-rs"] }
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "time"] }
+rand = "0.8"
+base64 = "0.22"
+uniffi = "0.32"
+
+[dev-dependencies]
+anyhow = "1"
