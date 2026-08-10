@@ -44,10 +44,14 @@ jobs:
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           git config user.name "grouse-roam-core CI"
           git config user.email "actions@github.com"
-          git fetch origin maven-repo:mr || git checkout --orphan mr
-          git checkout mr || git checkout -b mr
+          # Rebuild the artifacts branch from scratch each publish (idempotent).
+          rm -rf "$RUNNER_TEMP/mr"
+          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$RUNNER_TEMP/mr"
+          cd "$RUNNER_TEMP/mr"
+          git checkout --quiet maven-repo 2>/dev/null || git checkout --quiet --orphan maven-repo
+          git rm -rq --ignore-unmatch . 2>/dev/null || true
           mkdir -p "dev/grouse/roamcore/$VERSION"
-          cp "grouse-roam-core-$VERSION.aar" "dev/grouse/roamcore/$VERSION/roamcore-$VERSION.aar"
+          cp "$GITHUB_WORKSPACE/grouse-roam-core-$VERSION.aar" "dev/grouse/roamcore/$VERSION/roamcore-$VERSION.aar"
           cat > "dev/grouse/roamcore/$VERSION/roamcore-$VERSION.pom" <<EOF
           <project>
             <modelVersion>4.0.0</modelVersion>
@@ -76,6 +80,8 @@ jobs:
             </versioning>
           </metadata>
           EOF
-          git add -A
-          git commit -m "publish roamcore $VERSION" || exit 0
-          git push origin mr:maven-repo
+          # `git add -f`: *.aar is gitignored in this repo, but the maven-repo
+          # branch must carry the artifact.
+          git add -f .
+          git commit -q -m "publish roamcore $VERSION"
+          git push --quiet origin maven-repo
