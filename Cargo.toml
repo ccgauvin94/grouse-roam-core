@@ -1,6 +1,6 @@
 [package]
 name = "grouse-roam-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "Native iroh roam transport for the Grouse Android/KDE clients"
@@ -26,3 +26,14 @@ uniffi = "0.32"
 
 [dev-dependencies]
 anyhow = "1"
+
+# The shipped .so dominates the APK (21.6 MB). Size profile: LTO + strip +
+# abort-on-panic. The transport is network-latency-bound, not CPU-bound, so
+# opt-level z costs nothing measurable; panic=abort is fine because a panic in
+# the transport is fatal to the connection anyway.
+[profile.release]
+opt-level = "z"
+codegen-units = 1
+strip = true
+lto = true
+panic = "abort"
