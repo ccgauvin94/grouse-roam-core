@@ -91,26 +91,32 @@ pub fn roam_connect(
         .map_err(|e| RoamError::Message(format!("invalid card: {e}")))?;
 
     let rt = runtime();
-    let stream: RoamingClientStream = rt
+    // Keep the NODE (iroh Endpoint) alive for the stream's whole lifetime. iroh 1.0.3
+    // tears down every connection when its Endpoint drops — holding only the `Connection`
+    // is not enough (the Endpoint runs the IO actor). Dropping the node here is what made
+    // connect succeed, then the very first read return "stream closed".
+    let (node, stream): (Arc<RoamingNode>, RoamingClientStream) = rt
         .block_on(async {
             // Client node: bind with defaults (public relays, no inbound trust)
-            // and dial the card's endpoint. The node is dropped after connect —
-            // the stream owns the connection.
+            // and dial the card's endpoint.
             let node = RoamingNode::bind(RoamingConfig::new(identity))
                 .await
                 .map_err(|e| RoamError::Message(format!("bind: {e}")))?;
-            node.connect(&card, label)
+            let stream = node
+                .connect(&card, label)
                 .await
-                .map_err(|e| RoamError::Message(format!("connect: {e}")))
+                .map_err(|e| RoamError::Message(format!("connect: {e}")))?;
+            Ok::<_, RoamError>((node, stream))
         })?;
 
     let (write, read, conn) = stream.into_futures_io();
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
     rt.spawn(async move {
-        // `conn` is moved in here and held for the task's lifetime — dropping
-        // it would close the iroh connection under the stream.
+        // `conn` AND `node` are moved in here and held for the task's lifetime — dropping
+        // either closes the iroh connection under the stream.
         let mut read = read;
         let _conn = conn;
+        let _node = node;
         let mut buf = vec![0u8; 16384];
         loop {
             match read.read(&mut buf).await {
@@ -143,11 +149,17 @@ impl RoamStream {
     pub fn read(&self, max: i64) -> Result<Vec<u8>, RoamError> {
         let max = max.max(0) as usize;
         loop {
-            let mut pending = self.pending.lock().unwrap();
-            if !pending.is_empty() {
-                let n = pending.len().min(max);
-                let out: Vec<u8> = pending.drain(..n).collect();
-                return Ok(out);
+            // Scope the `pending` lock so it is DROPPED before we block on recv() and before
+            // re-locking below. Holding it across recv() (and then re-locking the same
+            // non-reentrant std Mutex to append) deadlocked read the instant the first chunk
+            // arrived — the read task had the bytes, but this side never woke to drain them.
+            {
+                let mut pending = self.pending.lock().unwrap();
+                if !pending.is_empty() {
+                    let n = pending.len().min(max);
+                    let out: Vec<u8> = pending.drain(..n).collect();
+                    return Ok(out);
+                }
             }
             if *self.closed.lock().unwrap() {
                 return Ok(Vec::new());
@@ -169,8 +181,14 @@ impl RoamStream {
     pub fn write(&self, data: Vec<u8>) -> Result<(), RoamError> {
         let mut write = self.write.lock().unwrap();
         let w = write.as_mut().ok_or_else(|| RoamError::Message("stream closed".into()))?;
+        // flush after write_all: on iroh's SendStream, write_all only queues bytes; without a
+        // flush a small newline-framed ACP message can sit in the send buffer and never reach
+        // the host, so the host never reads a line and never replies (initialize hangs).
         self.rt
-            .block_on(w.write_all(&data))
+            .block_on(async {
+                w.write_all(&data).await?;
+                w.flush().await
+            })
             .map_err(|e| RoamError::Message(format!("write: {e}")))
     }
 
