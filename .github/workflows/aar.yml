@@ -42,12 +42,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          git config user.name "grouse-roam-core CI"
-          git config user.email "actions@github.com"
           # Rebuild the artifacts branch from scratch each publish (idempotent).
           rm -rf "$RUNNER_TEMP/mr"
           git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$RUNNER_TEMP/mr"
           cd "$RUNNER_TEMP/mr"
+          git config user.name "grouse-roam-core CI"
+          git config user.email "actions@github.com"
           git checkout --quiet maven-repo 2>/dev/null || git checkout --quiet --orphan maven-repo
           git rm -rq --ignore-unmatch . 2>/dev/null || true
           mkdir -p "dev/grouse/roamcore/$VERSION"
