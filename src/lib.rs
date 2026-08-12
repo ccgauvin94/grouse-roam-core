@@ -28,6 +28,8 @@ use tokio::runtime::Runtime;
 
 uniffi::setup_scaffolding!();
 
+mod capi;
+
 /// A blocking handle over an authenticated roam stream.
 ///
 /// One reader task per stream pulls bytes off the iroh duplex into a channel;
@@ -37,6 +39,9 @@ uniffi::setup_scaffolding!();
 pub struct RoamStream {
     rt: &'static Runtime,
     rx: Mutex<Receiver<Result<Vec<u8>, String>>>,
+    // A sender clone so close/cancel can interrupt a blocked read() — the
+    // reader task's own sender lives in the task, unreachable from here.
+    cancel: parking_lot::Mutex<Option<mpsc::Sender<Result<Vec<u8>, String>>>>,
     pending: Mutex<Vec<u8>>,
     write: Mutex<Option<Box<dyn futures::io::AsyncWrite + Send + Unpin>>>,
     closed: Mutex<bool>,
@@ -111,6 +116,7 @@ pub fn roam_connect(
 
     let (write, read, conn) = stream.into_futures_io();
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
+    let cancel_tx = tx.clone();
     rt.spawn(async move {
         // `conn` AND `node` are moved in here and held for the task's lifetime — dropping
         // either closes the iroh connection under the stream.
@@ -136,6 +142,7 @@ pub fn roam_connect(
     Ok(Arc::new(RoamStream {
         rt,
         rx: Mutex::new(rx),
+        cancel: parking_lot::Mutex::new(Some(cancel_tx)),
         pending: Mutex::new(Vec::new()),
         write: Mutex::new(Some(Box::new(write))),
         closed: Mutex::new(false),
@@ -196,6 +203,14 @@ impl RoamStream {
     pub fn shutdown(&self) {
         *self.closed.lock().unwrap() = true;
         self.write.lock().unwrap().take();
+    }
+
+    /// Interrupt a blocked `read()` (used by close paths): the next recv
+    /// returns an error instead of waiting for the peer.
+    pub fn cancel(&self) {
+        if let Some(tx) = self.cancel.lock().take() {
+            let _ = tx.send(Err("cancelled".into()));
+        }
     }
 }
 

@@ -1087,6 +1087,7 @@ dependencies = [
  "futures",
  "goose-roaming",
  "iroh",
+ "parking_lot",
  "rand 0.8.7",
  "tokio",
  "uniffi",
